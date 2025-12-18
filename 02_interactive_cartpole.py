@@ -129,23 +129,32 @@ def main():
 
     # State Variables
     is_training = False
+    is_turbo = False
     episode_count = 0
     current_score = 0
     state, _ = env.reset()
     state = np.reshape(state, [1, state_size])
     
-    def start_training():
-        nonlocal is_training
+    def start_training_normal():
+        nonlocal is_training, is_turbo
         is_training = True
+        is_turbo = False
+        
+    def start_training_turbo():
+        nonlocal is_training, is_turbo
+        is_training = True
+        is_turbo = True
         
     def stop_training():
-        nonlocal is_training
+        nonlocal is_training, is_turbo
         is_training = False
+        is_turbo = False
 
     # Buttons
-    btn_start = Button(50, 500, 150, 50, "Start Learning", start_training)
-    btn_stop = Button(220, 500, 150, 50, "Stop Learning", stop_training)
-    buttons = [btn_start, btn_stop]
+    btn_start = Button(25, 350, 200, 50, "Start (1x)", start_training_normal)
+    btn_turbo = Button(25, 410, 200, 50, "Turbo (25x)", start_training_turbo)
+    btn_stop = Button(25, 470, 200, 50, "Stop", stop_training)
+    buttons = [btn_start, btn_turbo, btn_stop]
 
     # Layout Dimensions
     SIDEBAR_WIDTH = 250
@@ -162,37 +171,37 @@ def main():
 
         # AI Logic
         if is_training:
-            action = agent.act(state)
-            next_state, reward, done, truncated, _ = env.step(action)
+            # Determine speed based on mode
+            # User request: 25x speed, but more FPS
+            steps_per_frame = 25 if is_turbo else 1
             
-            # --- CUSTOM REWARD SYSTEM ---
-            # 1. Big penalty for falling
-            if done:
-                reward = -100
-            else:
-                # 2. Reward depends on how straight it is
-                # Angle is in next_state[2]. 0 is perfect.
-                angle = next_state[2]
-                reward = 1.0 - (abs(angle) / (math.pi / 2)) 
-                # Explanation: 
-                # If angle is 0 (perfect), reward is 1.0
-                # If angle is 90 (fallen), reward is near 0
-            
-            next_state = np.reshape(next_state, [1, state_size])
-            
-            agent.remember(state, action, reward, next_state, done)
-            state = next_state
-            current_score += 1
-            
-            if done or truncated:
-                # Update stats only on failure to keep it readable? 
-                # Actually real-time score is better.
-                print(f"Episode: {episode_count}, Score: {current_score}, Epsilon: {agent.epsilon:.2f}")
-                episode_count += 1
-                current_score = 0
-                state, _ = env.reset()
-                state = np.reshape(state, [1, state_size])
-                agent.replay()
+            for _ in range(steps_per_frame): 
+                action = agent.act(state)
+                next_state, reward, done, truncated, _ = env.step(action)
+                
+                # --- CUSTOM REWARD SYSTEM ---
+                if done:
+                    reward = -100
+                else:
+                    angle = next_state[2]
+                    reward = 1.0 - (abs(angle) / (math.pi / 2)) 
+                
+                next_state = np.reshape(next_state, [1, state_size])
+                
+                agent.remember(state, action, reward, next_state, done)
+                state = next_state
+                current_score += 1
+                
+                if done or truncated:
+                    print(f"Episode: {episode_count}, Score: {current_score}, Epsilon: {agent.epsilon:.2f}")
+                    episode_count += 1
+                    current_score = 0
+                    state, _ = env.reset()
+                    state = np.reshape(state, [1, state_size])
+                    agent.replay()
+                    
+                    # In Turbo, we might want to break on death to show the reset? 
+                    # But for max speed, let's keep going.
                 
         # Rendering
         screen.fill(BG_COLOR)
@@ -216,11 +225,15 @@ def main():
             screen.blit(surf, (x_pos, y_pos))
 
         # 3. UI Stats (Inside Sidebar)
+        status_text = "PAUSED"
+        if is_training:
+            status_text = "TURBO (25x)" if is_turbo else "NORMAL (1x)"
+            
         stats = [
             f"Episode: {episode_count}",
             f"Score: {current_score}",
             f"Epsilon: {agent.epsilon:.2f}",
-            f"Status: {'LEARNING' if is_training else 'PAUSED'}"
+            f"Status: {status_text}"
         ]
         
         # Title
@@ -232,18 +245,14 @@ def main():
             text = font.render(stat, True, TEXT_COLOR)
             screen.blit(text, (20, 80 + i * 40))
 
-        # 4. Draw Buttons (Sidebar Bottom)
-        # Reposition buttons to fit sidebar
-        btn_start.rect.topleft = (25, 400)
-        btn_stop.rect.topleft = (25, 470)
-        
+        # 4. Draw Buttons
         for btn in buttons:
             btn.draw(screen, font)
 
         pygame.display.flip()
         
-        # Limit FPS to 60 for visibility
-        clock.tick(60)
+        # Increase FPS to 120 for smoother visuals
+        clock.tick(120)
 
     env.close()
     pygame.quit()

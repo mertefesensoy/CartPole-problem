@@ -2,6 +2,8 @@
 
 This project uses **Reinforcement Learning** to teach an AI how to balance a pole on a cart.
 
+> **🏆 Benchmark Record**: See [BENCHMARK_REPORT.md](BENCHMARK_REPORT.md) for full technical details and hyperparameters.
+
 ## Setup
 
 1.  **Activate the Environment**:
