@@ -1,3 +1,18 @@
+import os
+import warnings
+
+# 1. Suppress TensorFlow oneDNN logs (Must be done before importing tensorflow)
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2' # Suppress TF info/warnings
+
+# 2. Suppress Warnings (pkg_resources, np.object, etc)
+# Use broader filters to ensure we catch them
+warnings.simplefilter("ignore", category=UserWarning) 
+warnings.simplefilter("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", module="pkg_resources")
+warnings.filterwarnings("ignore", message=".*pkg_resources.*") 
+warnings.filterwarnings("ignore", message=".*np.object.*")
+
 import gymnasium as gym
 import numpy as np
 import tensorflow as tf
@@ -14,12 +29,12 @@ import math
 # 1. SETTINGS & HYPERPARAMETERS
 # ==========================================
 ENV_NAME = "CartPole-v1"
-GAMMA = 0.95
+GAMMA = 0.99             # Higher focus on long-term survival
 EPSILON_START = 1.0
-EPSILON_MIN = 0.05       # Never stop exploring completely (5% random)
-EPSILON_DECAY = 0.999    # Learn slower to avoid getting stuck
+EPSILON_MIN = 0.05
+EPSILON_DECAY = 0.999    # Slow decay for deeper learning
 LEARNING_RATE = 0.001
-BATCH_SIZE = 64          # Learn from more examples at once
+BATCH_SIZE = 64
 
 # UI Settings
 SCREEN_WIDTH = 800
@@ -36,16 +51,30 @@ class DQNAgent:
     def __init__(self, state_size, action_size):
         self.state_size = state_size
         self.action_size = action_size
-        self.memory = deque(maxlen=10000) # Big memory: Remember 10,000 steps
+        self.memory = deque(maxlen=10000)
         self.epsilon = EPSILON_START
         
-        self.model = Sequential([
-            Dense(32, input_dim=state_size, activation='relu'), # Bigger brain
-            Dense(32, activation='relu'),
-            Dense(action_size, activation='linear')
-        ])
-        self.model.compile(loss='mse', optimizer=Adam(learning_rate=LEARNING_RATE))
+        # Main Model (Learns every step)
+        self.model = self._build_model()
+        
+        # Target Model (Stabilizes predictions)
+        self.target_model = self._build_model()
+        self.update_target_model()
 
+    def _build_model(self):
+        # Increased capacity (64 neurons) for Pro-Level learning
+        model = Sequential([
+            Dense(64, input_dim=self.state_size, activation='relu'), 
+            Dense(64, activation='relu'),
+            Dense(self.action_size, activation='linear')
+        ])
+        model.compile(loss='mse', optimizer=Adam(learning_rate=LEARNING_RATE))
+        return model
+
+    def update_target_model(self):
+        # Copy weights from model to target_model
+        self.target_model.set_weights(self.model.get_weights())
+        
     def act(self, state, force_greedy=False):
         if not force_greedy and np.random.rand() <= self.epsilon:
             return random.randrange(self.action_size)
@@ -63,8 +92,11 @@ class DQNAgent:
         states = np.array([i[0] for i in minibatch]).squeeze()
         next_states = np.array([i[3] for i in minibatch]).squeeze()
         
+        # Predict Q-values for starting states using the MAIN model
         targets = self.model.predict_on_batch(states)
-        next_q_values = self.model.predict_on_batch(next_states)
+        
+        # Predict future Q-values using the TARGET model (Stable!)
+        next_q_values = self.target_model.predict_on_batch(next_states)
         
         # Convert to numpy to allow modification
         if hasattr(targets, 'numpy'): targets = targets.numpy()
@@ -107,20 +139,17 @@ class Button:
                 self.callback()
 
 # ==========================================
-# 4. MAIN APP
+# 4. MAIN APP (SINGLE AGENT)
 # ==========================================
 def main():
     pygame.init()
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-    pygame.display.set_caption("Interactive AI Trainer: CartPole")
+    pygame.display.set_caption("CartPole AI: Single Agent Pro")
     font = pygame.font.SysFont("Arial", 20)
     clock = pygame.time.Clock()
 
     # AI Setup
     env = gym.make(ENV_NAME, render_mode='rgb_array')
-    
-    # CUSTOMIZATION: Allow the pole to fall all the way (90 degrees) before resetting
-    # Default is roughly 12 degrees.
     env.unwrapped.theta_threshold_radians = math.pi / 2
     
     state_size = int(env.observation_space.shape[0])
@@ -132,6 +161,7 @@ def main():
     is_turbo = False
     episode_count = 0
     current_score = 0
+    best_score = 0
     state, _ = env.reset()
     state = np.reshape(state, [1, state_size])
     
@@ -192,16 +222,21 @@ def main():
                 state = next_state
                 current_score += 1
                 
+                # Track Best Score
+                if current_score > best_score:
+                    best_score = current_score
+                
                 if done or truncated:
                     print(f"Episode: {episode_count}, Score: {current_score}, Epsilon: {agent.epsilon:.2f}")
                     episode_count += 1
                     current_score = 0
                     state, _ = env.reset()
                     state = np.reshape(state, [1, state_size])
-                    agent.replay()
                     
-                    # In Turbo, we might want to break on death to show the reset? 
-                    # But for max speed, let's keep going.
+                    # Update Target Network for PRO stability
+                    agent.update_target_model()
+                    
+                    agent.replay()
                 
         # Rendering
         screen.fill(BG_COLOR)
@@ -231,13 +266,14 @@ def main():
             
         stats = [
             f"Episode: {episode_count}",
+            f"Best Score: {best_score}",
             f"Score: {current_score}",
             f"Epsilon: {agent.epsilon:.2f}",
             f"Status: {status_text}"
         ]
         
         # Title
-        title_surf = font.render("CartPole AI", True, (100, 200, 255))
+        title_surf = font.render("CartPole Pro", True, (100, 200, 255))
         screen.blit(title_surf, (20, 20))
 
         # Stats List
